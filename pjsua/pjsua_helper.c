@@ -1,9 +1,13 @@
 #include "pjsua_app.h"
 #include "pjsua_app_config.h"
 #include "pjsua_helper.h"
+#include "MMWrap.h"
+#include <ShlObj.h>
+#pragma comment(lib,"Shell32.lib")
 
 extern HWND g_hWndMain;
 extern struct  CmdParams g_cmdparam;
+
 
 static  char *pjparam[] = { "pjsua",
 "--use-cli",
@@ -24,13 +28,6 @@ static  char *pjparam[] = { "pjsua",
 NULL };
 
 
-#ifdef BIZ_UNIT_TEST
-extern HWND g_hWndLbl;
-void SetToolTip(char* tooltip)
-{
-	SetWindowText(g_hWndLbl, tooltip);
-}
-#endif
 
 void PjsuaInit()
 {
@@ -52,6 +49,13 @@ void PjsuaInit()
 	if (status != PJ_SUCCESS)
 		return;
 
+	SetTimer(g_hWndMain, ID_TIMER_CHECKALIVE, 2000, 0);
+
+	//监听设备
+	CreateMMInstance(g_hWndMain);
+	//检测一次设备
+	PjsuaCheckDevice();
+
 	status = pjsua_app_run(PJ_FALSE);
 	if (status != PJ_SUCCESS)
 		return;
@@ -61,6 +65,9 @@ void PjsuaInit()
 void PjsuaDestroy()
 {
 	pjsua_app_destroy();
+
+	//取消监听
+	ReleaseMMInstance();
 }
 
 
@@ -88,13 +95,11 @@ void PjsuaAnswer()
 		pjsua_msg_data_init(&msg_data_);
 		if (PJ_SUCCESS == pjsua_call_answer2(current_call, &call_opt, 200, NULL, &msg_data_))
 		{
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_ANSERING, sip_error_ok, 0);
-			SET_TOOL_TIP("answering");
+			CheckPostMessage( SIP_MSG_ANSERING, sip_error_ok, 0);
 		}
 		else
 		{
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_INCOMING, sip_error_answer_error, 0);
-			SET_TOOL_TIP("answering error and back to incoming");
+			CheckPostMessage(SIP_MSG_INCOMING, sip_error_answer_error, 0);
 		}
 	}
 }
@@ -106,13 +111,11 @@ void PjsuaHangup()
 	{
 		if(PJ_SUCCESS== pjsua_call_hangup(current_call, 0, NULL, NULL))
 		{
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_HANGUPING, sip_error_ok, 0);
-			SET_TOOL_TIP("hanguping");
+			CheckPostMessage(SIP_MSG_HANGUPING, sip_error_ok, 0);
 		}
 	    else
 	    {
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_CONNECTED, sip_error_hangup_error, 0);
-		    SET_TOOL_TIP("hanguping error and back to conneced");
+			CheckPostMessage(SIP_MSG_CONNECTED, sip_error_hangup_error, 0);
 	    }
 	}
 }
@@ -149,17 +152,57 @@ void PjsuaCall(char * id)
 	if (PJ_SUCCESS == pjsua_call_make_call(current_acc, &tmp, &call_opt, NULL,
 		&msg_data_, &current_call))
 	{
-		PostMessage(g_cmdparam.hwnd_, SIP_MSG_CALLING, sip_error_ok, 0);
-		SET_TOOL_TIP("calling");
+		CheckPostMessage(SIP_MSG_CALLING, sip_error_ok, 0);
 	}
 	else
 	{
-		PostMessage(g_cmdparam.hwnd_, SIP_MSG_ONLINE, sip_error_calling_error, 0);
-		SET_TOOL_TIP("calling error and back to online");
+		CheckPostMessage(SIP_MSG_ONLINE, sip_error_calling_error, 0);
 	}
 		
 }
 
+
+void PjsuaMute(float mute)
+{
+	pjsua_conf_adjust_rx_level(0, mute);
+}
+
+
+void PjsuaDtmf(char* number)
+{
+	if (current_call == -1) {
+		return;
+	}
+	else if (!pjsua_call_has_media(current_call)) {
+		return;
+	}
+	else {
+		pj_str_t digits;
+		digits = pj_str(number);
+		 pjsua_call_dial_dtmf(current_call, &digits);
+	}
+}
+
+
+void PjsuaCheckDevice()
+{
+	//通知主程序设备情况
+	pjmedia_aud_dev_refresh();
+	unsigned count = PJMEDIA_AUD_MAX_DEVS;
+	pjmedia_aud_dev_info aud_dev_info[PJMEDIA_AUD_MAX_DEVS];
+	pjsua_enum_aud_devs(aud_dev_info, &count);
+	int hasAudio = 0;
+	for (unsigned i = 0; i < count; i++)
+	{
+		if (aud_dev_info[i].input_count ) {
+			//有麦
+			hasAudio = 1;
+			break;
+		}
+	}
+
+	CheckPostMessage(SIP_MSG_AUD_CHECK, 0, hasAudio);
+}
 
 /* Called when pjsua is started */
 void PjsuaOnStarted(pj_status_t status, const char* title)
@@ -199,6 +242,41 @@ void PjsuaOnConfig(pjsua_app_config *cfg)
 	PJ_UNUSED_ARG(cfg);
 }
 
+
+void CheckPostMessage(UINT msg, WPARAM w, LPARAM l)
+{
+	if (!BIZ_UNIT_TEST)
+	{
+		if (!IsWindow(g_cmdparam.hwnd_))
+		{
+			//退出程序
+			PostMessage(g_hWndMain, WM_CLOSE, 0, 0);
+		}
+		else
+		{
+			PostMessage(g_cmdparam.hwnd_, msg, w, l);
+		}
+	}
+	
+}
+
+
+void CheckSendMessage(UINT msg, WPARAM w, LPARAM l)
+{
+	if (!BIZ_UNIT_TEST)
+	{
+		if (!IsWindow(g_cmdparam.hwnd_))
+		{
+			//退出程序
+			PostMessage(g_hWndMain, WM_CLOSE, 0, 0);
+		}
+		else
+		{
+			SendMessage(g_cmdparam.hwnd_, msg, w, l);
+		}
+	}
+}
+
 char* dumpPjstr(pj_str_t t)
 {
 	char* buff = malloc(t.slen+1);
@@ -235,7 +313,22 @@ void SendJsonCmd(char* state, pj_str_t id)
 	cpd.dwData = 0;
 	cpd.cbData = strlen(buff) + 1;
 	cpd.lpData = (void*)buff;
-	SendMessage(g_cmdparam.hwnd_, WM_COPYDATA, 0, (LPARAM)&cpd);
+	CheckSendMessage( WM_COPYDATA, 0, (LPARAM)&cpd);
+}
+
+
+char* getLogPath()
+{
+	//日志路径
+	//先获取appdata
+	static char filepath[MAX_PATH];
+	memset(filepath, 0, MAX_PATH);
+	SHGetSpecialFolderPathA(NULL, filepath, CSIDL_LOCAL_APPDATA, FALSE);
+
+	//CloudCDebug\NIM
+	strcat(filepath, "\\CloudCDebug\\NIM\\sip.log");
+
+	return filepath;
 }
 
 // std::string string_cmd = nbase::UTF16ToUTF8(strCmdLine);
@@ -278,12 +371,30 @@ void CheckCmd(char* cmdJson, size_t t)
 			{
 				PostMessage(g_hWndMain, WM_APP_CANCEL, 0, 0);
 			}
+			else if (pj_strcmp2(&cmd, SIP_CMD_CLOSE) == 0)
+			{
+				PostMessage(g_hWndMain, WM_APP_DESTROY, 0, 0);
+			}
 			else if (pj_strcmp2(&cmd, SIP_CMD_CALL) == 0)
 			{
 				elem2 = elem->value.children.prev;
 				param = elem2->value.str;
 				char* id = dumpPjstr(param);
 				PostMessage(g_hWndMain, WM_APP_CALL, 0, (LPARAM)id);
+			}
+			else if (pj_strcmp2(&cmd, SIP_CMD_DTMF) == 0)
+			{
+				elem2 = elem->value.children.prev;
+				param = elem2->value.str;
+				char* id = dumpPjstr(param);
+				PostMessage(g_hWndMain, WM_APP_DTMF, 0, (LPARAM)id);
+			}
+			else if (pj_strcmp2(&cmd, SIP_CMD_MUTE) == 0)
+			{
+				elem2 = elem->value.children.prev;
+				param = elem2->value.str;
+				char* id = dumpPjstr(param);
+				PostMessage(g_hWndMain, WM_APP_MUTE, 0, (LPARAM)id);
 			}
 		}
 	}

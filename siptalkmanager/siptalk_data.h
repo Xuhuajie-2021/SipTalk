@@ -1,12 +1,20 @@
-#pragma once
-#include "db/db_sqlite3.h"
+/** @file siptalk_data.h
+* @brief 维护对Sip插件的功能调用与通信(设计见https://www.cnblogs.com/xuhuajie/p/13445294.html)
+* @copyright (c) 2020-2023, Netease Inc. All rights reserved
+* @author Xuhuajie
+* @date 2020/8/13
+*/
 
+#pragma once
 //命令名字,需要与bizDta.h同步
 #define SIP_CMD_ANSWER         "answer_call"
 #define SIP_CMD_CALL           "make_call"
 #define SIP_CMD_HANGUP         "hangup_call"
 #define SIP_CMD_CANCEL         "cancel_call"
+#define SIP_CMD_MUTE           "mute"
 #define SIP_CMD_INCOMING       "state_incoming"
+#define SIP_CMD_DTMF           "send_dtmf"
+#define SIP_CMD_CLOSE          "close"
 
 #define SIP_PLUGIN_NAME         L"sipPlugin.exe"
 
@@ -18,7 +26,8 @@ namespace nim_comp
 	enum SipStatus
 	{
 		sip_status_default,
-		sip_status_offline,
+		sip_status_offline,      //注册失败了，sip服务器问题？
+		sip_status_neterror,     //网络出现了问题
 		sip_status_online,
 		sip_status_calling,
 		sip_status_ringing,
@@ -40,6 +49,7 @@ namespace nim_comp
 		sip_error_cancel,
 		sip_error_timeout,
 		sip_error_notfound,
+		sip_error_meeting_error,
 	};
 
 	//Sip的简单通知消息体集合，从WM_APP开始 需要与bizDta.h同步
@@ -54,6 +64,7 @@ namespace nim_comp
 		SIP_MSG_CONNECTED,
 		SIP_MSG_INCOMING,
 		SIP_MSG_DISCONNECT,
+		SIP_MSG_AUD_CHECK,            //麦检测， lparam 1 有 0 无 
 
 		//心跳
 		SIP_MSG_HEART, 
@@ -71,13 +82,14 @@ namespace nim_comp
 		* @param[out] call_id  保留，多路通话时的时候需要这个字段，目前不需要
 		* @param[out] id       分配的id，或电话号码（如8005 或 13000000001）
 		* @param[out] code     错误码    
+		* @param[out] origin   原始错误码,disconnect时有效
 		* @return 无
 		* @remark： 当code非sip_error_ok时，表明此时的status中出现了错误。有些错误情况建议维持原来的状态
 		（如挂断失败，此时如果已经是在线，则在线，连接中，则继续连接中比较好）。
 		（如拨打超时失败，则需要从calling转换成online，业务层好好斟酌取舍）
 		（当状态是断开连接时，code适合提示用户为啥出错)
 		*/
-		virtual void OnSipStatusNotify(SipStatus status, std::string call_id, std::string id, SipErrorCode code) = 0;
+		virtual void OnSipStatusNotify(SipStatus status, std::string call_id, std::string id, SipErrorCode code,int origin) = 0;
  	};
 
 	//Sip的命令集合

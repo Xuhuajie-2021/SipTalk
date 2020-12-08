@@ -179,6 +179,10 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 
     if (call_info.state == PJSIP_INV_STATE_DISCONNECTED) 
 	{
+		if (call_id != current_call)
+		{
+			return;  //多通电话自动拒接的那步
+		}
 		/* Stop all ringback for this call */
 		ring_stop(call_id);
 
@@ -210,17 +214,14 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 	if (call_info.last_status == PJSIP_SC_OK || call_info.last_status == PJSIP_SC_REQUEST_TERMINATED)
 	{
 		errorCode = sip_error_ok;
-		SET_TOOL_TIP("diconnect ok");
 	}
 	else if (call_info.last_status >= 500 && call_info.last_status < 600)
 	{
 		errorCode = sip_error_server_error;
-		SET_TOOL_TIP("diconnect server error");
 	}
 	else if (call_info.last_status == PJSIP_SC_NOT_FOUND)
 	{
 		errorCode = sip_error_notfound;
-		SET_TOOL_TIP("diconnect notfound");
 	}
 	else if (call_info.last_status == PJSIP_SC_BUSY_HERE
 		|| call_info.last_status == PJSIP_SC_BUSY_EVERYWHERE)
@@ -229,15 +230,11 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 		if (call_info.role == PJSIP_ROLE_UAC)
 		{
 			errorCode = sip_error_cancel;
-			SET_TOOL_TIP("diconnect cancel");
 		}
 		//当我是被叫方时，拒绝的连接
 		else
 		{
 			errorCode = sip_error_ok;
-			SET_TOOL_TIP("diconnect ok");
-// 			errorCode = sip_error_cancel;
-// 			SET_TOOL_TIP("diconnect cancel");
 		}
 	}
 	else if (call_info.last_status == PJSIP_SC_REQUEST_TIMEOUT
@@ -247,36 +244,15 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 		if (call_info.role == PJSIP_ROLE_UAC)
 		{
 			errorCode = sip_error_timeout;
-			SET_TOOL_TIP("diconnect timeout");
 		}
 		//当我是被叫方时，超时的连接（应该要增加一同未接来电）
 		else
 		{
 			errorCode = sip_error_ok;
-			SET_TOOL_TIP("diconnect ok");
 		}
 		
 	}
-// 	else if (call_info.last_status )
-// 	{
-// 		//当我是主叫方时，我拒绝的连接
-// 		if (call_info.role == PJSIP_ROLE_UAC)
-// 		{
-// 			errorCode = sip_error_ok;
-// 			SET_TOOL_TIP("diconnect ok");
-// 		}
-// 		//当我是被叫方时，我拒绝的连接
-// 		else
-// 		{
-// 			errorCode = sip_error_cancel;
-// 			SET_TOOL_TIP("diconnect cancel");
-// 		}
-// 	}
-	else
-	{
-		SET_TOOL_TIP("diconnect unknown error");
-	}
-	PostMessage(g_cmdparam.hwnd_, SIP_MSG_DISCONNECT, errorCode, call_info.last_status);
+	CheckPostMessage(SIP_MSG_DISCONNECT, errorCode, call_info.last_status);
 
 
 	if (call_id == current_call) {
@@ -297,22 +273,17 @@ static void on_call_state(pjsua_call_id call_id, pjsip_event *e)
 		//先通知状态
 		switch (call_info.state) {
 		case PJSIP_INV_STATE_CALLING:
-			SET_TOOL_TIP("Calling");
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_CALLING, 0, 0);
+			CheckPostMessage(SIP_MSG_CALLING, 0, 0);
 			break;
 		case PJSIP_INV_STATE_INCOMING:
-			SET_TOOL_TIP("Incoming Call");
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_INCOMING, 0, 0);
+			CheckPostMessage(SIP_MSG_INCOMING, 0, 0);
 			break;
 		case PJSIP_INV_STATE_EARLY:
-			SET_TOOL_TIP("early");
 			break;
 		case PJSIP_INV_STATE_CONNECTING:
-			SET_TOOL_TIP("Connecting");
 			break;
 		case PJSIP_INV_STATE_CONFIRMED:
-			SET_TOOL_TIP("Connected");
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_CONNECTED, 0, 0);
+			CheckPostMessage(SIP_MSG_CONNECTED, 0, 0);
 		}
 
 
@@ -400,7 +371,6 @@ static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 
 	//发送一个消息给主程序
 	SendJsonCmd(SIP_CMD_INCOMING, call_info.remote_info);
-	SET_TOOL_TIP("incoming");
 
     /* Start ringback */
     if (call_info.rem_aud_cnt)
@@ -713,14 +683,12 @@ static void on_reg_state2(pjsua_acc_id acc_id, pjsua_reg_info *info)
 		pjsua_acc_get_info(current_acc, &info);
 		if (info.has_registration &&info.status == PJSIP_SC_OK)
 		{
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_ONLINE, 0, (LPARAM)g_hWndMain);
-			SET_TOOL_TIP("online");
+			CheckPostMessage(SIP_MSG_ONLINE, 0, (LPARAM)g_hWndMain);
 		}
-		else
-		{
-			PostMessage(g_cmdparam.hwnd_, SIP_MSG_OFFLINE, 0, 0);
-			SET_TOOL_TIP("offline");
-		}
+// 		else
+// 		{
+// 			CheckPostMessage(SIP_MSG_OFFLINE, 0, 0);
+// 		}
 	}
 }
 
@@ -1472,7 +1440,7 @@ static pj_status_t app_init(void)
 	return status;
     }
 
-	app_config.log_cfg.log_filename = pj_str("test.log");
+	app_config.log_cfg.log_filename = pj_str(getLogPath());
 
     /* Initialize application callbacks */
     app_config.cfg.cb.on_call_state = &on_call_state;

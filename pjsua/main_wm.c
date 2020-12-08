@@ -60,17 +60,36 @@ LRESULT CALLBACK DialogProc(const HWND hWnd,
     case WM_CLOSE:
 	PostQuitMessage(0);
 	break;
-
+	case WM_TIMER:
+		if (wParam == ID_TIMER_CHECKALIVE)
+		{
+			if (!IsWindow(g_cmdparam.hwnd_))
+			{
+				if (!BIZ_UNIT_TEST)
+				{
+					PostQuitMessage(0);
+				}
+			}
+		}
+		else if (wParam == ID_TIMER_CHECKDEVICE)
+		{
+			//todo
+			KillTimer(g_hWndMain, ID_TIMER_CHECKDEVICE);
+			PjsuaCheckDevice();
+		}
+	break;
     case WM_APP_INIT:
     case WM_APP_RESTART:
 	PjsuaInit();
+	break;
+	case WM_DEVICECHANGE:
+		KillTimer(g_hWndMain, ID_TIMER_CHECKDEVICE);
+		SetTimer(g_hWndMain,  ID_TIMER_CHECKDEVICE, 1500, NULL);
 	break;
 
     case WM_APP_DESTROY:
 	PostQuitMessage(0);
 	break;
-
-#ifdef BIZ_UNIT_TEST
 	case WM_CHAR:
 	{
 		char* mmm;
@@ -88,12 +107,27 @@ LRESULT CALLBACK DialogProc(const HWND hWnd,
 			break;
 		case 'C':
 		case 'c':
-			mmm = "{ \"func\":\"make_call\", \"param\" : \"8002\" }";
+			mmm = "{ \"func\":\"make_call\", \"param\" : \"057122222222\" }";
+			CheckCmd(mmm, strlen(mmm) + 1);
+			break;
+		case 'F':
+		case 'f':
+			mmm = "{ \"func\":\"send_dtmf\", \"param\" : \"256175\" }";
 			CheckCmd(mmm, strlen(mmm) + 1);
 			break;
 		case 'D':
 		case 'd':
 			mmm = "{ \"func\":\"cancel_call\", \"param\" : \"8002\" }";
+			CheckCmd(mmm, strlen(mmm) + 1);
+			break;
+		case 'M':
+		case 'm':
+			mmm = "{ \"func\":\"mute\", \"param\" : \"1.0\" }";
+			CheckCmd(mmm, strlen(mmm) + 1);
+			break;
+		case 'N':
+		case 'n':
+			mmm = "{ \"func\":\"mute\", \"param\" : \"0.0\" }";
 			CheckCmd(mmm, strlen(mmm) + 1);
 			break;
 		case 'T':
@@ -105,8 +139,8 @@ LRESULT CALLBACK DialogProc(const HWND hWnd,
 			break;
 		}
 	}
-		break;
-#endif
+ 		break;
+
 	case WM_APP_CALL:
 	{
 		char* id = (char*)lParam;
@@ -123,6 +157,20 @@ LRESULT CALLBACK DialogProc(const HWND hWnd,
 		break;
 	case WM_APP_CANCEL:
 		PjsuaCancel();
+		break;
+	case WM_APP_MUTE:
+	{
+		char* id = (char*)lParam;
+		PjsuaMute(atof(id));
+		free(id);  //id释放，call函数不负责变量释放，万一有些id是不需要释放
+	}
+		break;
+	case WM_APP_DTMF:
+	{
+		char* id = (char*)lParam;
+		PjsuaDtmf(id);
+		free(id);  //id释放，call函数不负责变量释放，万一有些id是不需要释放
+	}
 		break;
 	case WM_COPYDATA:
 	{
@@ -179,16 +227,23 @@ pj_status_t GuiInit()
 	return PJ_RETURN_OS_ERROR(err);
     }
 
-    /* Create the app. window */
-	g_hWndMain = CreateWindowEx(WS_EX_TOOLWINDOW, MAINWINDOWCLASS, MAINWINDOWTITLE,
-		WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-			      CW_USEDEFAULT, CW_USEDEFAULT,
-			      (HWND)NULL, NULL, g_hInst, (LPSTR)NULL);
-    if (g_hWndMain == NULL) {
-	DWORD err = GetLastError();
-	return PJ_RETURN_OS_ERROR(err);
-    }
-
+	DWORD style = WS_OVERLAPPEDWINDOW;
+	DWORD styleEx = WS_EX_TOOLWINDOW;
+	if (BIZ_UNIT_TEST)
+	{
+		style |= WS_VISIBLE;
+		styleEx = 0;
+	}
+	
+	/* Create the app. window */
+	g_hWndMain = CreateWindowEx(styleEx, MAINWINDOWCLASS, MAINWINDOWTITLE,
+		style, CW_USEDEFAULT, CW_USEDEFAULT,
+		CW_USEDEFAULT, CW_USEDEFAULT,
+		(HWND)NULL, NULL, g_hInst, (LPSTR)NULL);
+	if (g_hWndMain == NULL) {
+		DWORD err = GetLastError();
+		return PJ_RETURN_OS_ERROR(err);
+	}
 
 
     /* Create exit menu */
@@ -313,11 +368,10 @@ int WINAPI WinMain(
 	g_cmd_line = pj_str(lpCmdLine);
 	if (g_cmd_line.slen == 0)
 	{
-#ifdef BIZ_UNIT_TEST
-		g_cmd_line = pj_str("1234&101.231.133.17:5068&8008&8008&Better2@20&101.231.133.21&1&");
-#else
+// #ifdef BIZ_UNIT_TEST
+// 		g_cmd_line = pj_str("1234&101.231.133.17:5068&8008&8008&Better2@20&101.231.133.21&1&");
+// #else
 		return 0;
-#endif
 	}
 	//g_cmdparam.hwnd_ = pj_strtol(&cmd_line);
 	

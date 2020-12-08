@@ -82,6 +82,25 @@ namespace nim_comp
 		*/
 		bool HangUpCall(const std::string& call_id);
 
+		/**
+		* @brief 设置静音
+		* @param[in] bQuiet    true 静音， false 取消静音 
+		* @return true 设置成功 false 设置失败
+		* @remark : 协议格式：  { "func":"mute","param":"float" }
+		* 注意，协议是支持调整任意音量的 float取值0.0 - 1.0
+		* pjsip是支持静对方音的，目前无该需求
+		*/
+		bool SetQuiet(bool bQuiet);
+
+		/**
+		* @brief 通话过程中输入
+		* @param[in] bQuiet    true 静音， false 取消静音
+		* @return true 设置成功 false 设置失败
+		* @remark : 协议格式：  { "func":"mute","param":"float" }
+		* 注意，协议是支持调整任意音量的 float取值0.0 - 1.0
+		* pjsip是支持静对方音的，目前无该需求
+		*/
+		bool SendDtmf(const std::string& number);
 
 		/**
 		* @brief 设置插件窗口句柄，用于通信
@@ -90,13 +109,27 @@ namespace nim_comp
 		*/
 		void SetSipWnd(HWND hWnd);
 		/**
+		* @brief 音频设备检测结果设置
+		* @param[in] hasAudio   0 无 1有
+		* @return 无
+		*/
+		void SetHasAudio(int hasAudio);
+
+		/**
+		* @brief 获取音频设备结果
+		* @param 无
+		* @return 1 有 0无
+		*/
+		int  GetHasAudio() const;
+
+		/**
 		* @brief 检测插件是否存活，是否需要重启
 		*/
 		void CheckSipPluginAlive();
 		/**
 		* @brief 插件传递的状态信息
 		*/
-		void SetStatus(SipStatus status, std::string id, SipErrorCode code);
+		void SetStatus(SipStatus status, std::string id, SipErrorCode code, int origin=0);
 
 	private:
 		/**
@@ -119,6 +152,7 @@ namespace nim_comp
 		HWND         sip_wnd_; //插件的窗口句柄，方便进程间通信
 		time_t       lasttimestamp_;  
 		bool         bInit_;
+		int          hasAudio_;
 
 		ISipStatusNotify* notify_;
 	};

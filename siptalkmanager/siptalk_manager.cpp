@@ -7,10 +7,11 @@ namespace nim_comp
 	SipTalkManager::SipTalkManager()
 	{
 		sip_wnd_ = NULL;
-		sip_status_ = sip_status_offline;
+		sip_status_ = sip_status_default;
 		notify_ = nullptr;
 		lasttimestamp_ = 0;
 		bInit_ = false;
+		hasAudio_ = 0;
 	}
 
 	SipTalkManager::~SipTalkManager()
@@ -76,6 +77,7 @@ namespace nim_comp
 	bool SipTalkManager::StartSipPlugin(const std::string& server, const std::string &id, const std::string &user,
 		const std::string& pwd, const std::string& stun, SipProtocol p/*=sip_p_udp*/)
 	{
+		QLOG_APP(L"StartSipPlugin{0}{1}{2}{3}")<<server<<id<<pwd<<stun;
 		if (server.empty() || id.empty() || pwd.empty())
 		{
 			return false;
@@ -135,12 +137,6 @@ namespace nim_comp
 
 	bool SipTalkManager::CancelCall(const std::string& call_id)
 	{
-		//状态检测
-		if (sip_status_ != sip_status_ringing && sip_status_ != sip_status_calling)
-		{
-			return false;
-		}
-
 		if (sip_wnd_ == NULL || !IsWindow(sip_wnd_))
 		{
 			return false;
@@ -169,28 +165,103 @@ namespace nim_comp
 		return true;
 	}
 
+	bool SipTalkManager::SetQuiet(bool bQuiet)
+	{
+		if (sip_wnd_ == NULL || !IsWindow(sip_wnd_))
+		{
+			return false;
+		}
+
+		//生成协议
+		if (bQuiet)
+		{
+			SendCmd(SIP_CMD_MUTE, "0.0");
+		}
+		else
+		{
+			SendCmd(SIP_CMD_MUTE, "1.0");
+		}
+		
+		return true;
+	}
+
+	bool SipTalkManager::SendDtmf(const std::string& number)
+	{
+		//状态检测
+		if (sip_status_ != sip_status_connected)
+		{
+			return false;
+		}
+
+		if (sip_wnd_ == NULL || !IsWindow(sip_wnd_))
+		{
+			return false;
+		}
+
+		//生成协议
+		SendCmd(SIP_CMD_DTMF, number);
+		return true;
+	}
+
 	void SipTalkManager::SetSipWnd(HWND hWnd)
 	{
 		sip_wnd_ = hWnd;
 	}
 
+	void SipTalkManager::SetHasAudio(int hasAudio)
+	{
+		hasAudio_ = hasAudio;
+	}
+
+	int SipTalkManager::GetHasAudio() const
+	{
+		return hasAudio_;
+	}
+
 	//这里可以检测插件是否还存活着
 	void SipTalkManager::CheckSipPluginAlive()
 	{
+		static int retry_time = 0;
 		if (sip_status_ == sip_status_default)
 		{
 			return;
 		}
-
 		//todo 插件如果不在了，就重启, 可以通过进程检测，或者约定的心跳间隔
 		if (nbase::win32::FindProcessId(SIP_PLUGIN_NAME) == -1)
 		{
 			startSipPlugin();
 		}
+		//如果5次仍然是未在线，重启下
+		if (sip_status_ == sip_status_offline)
+		{
+			if (retry_time >= 5)
+			{
+				startSipPlugin();
+				retry_time = 0;
+			}
+			else
+			{
+				retry_time++;
+			}
+		}
 	}
 
-	void SipTalkManager::SetStatus(SipStatus status, std::string id, SipErrorCode code)
+	void SipTalkManager::SetStatus(SipStatus status, std::string id, SipErrorCode code, int origin)
 	{
+		if (status == sip_status_online && code == sip_error_ok)
+		{
+			//通话中的时候来online应该忽略掉
+			if (sip_status_ == sip_status_connected ||
+				sip_status_ == sip_status_hunguping ||
+				sip_status_ == sip_status_calling ||
+				sip_status_ == sip_status_ringing ||
+				sip_status_ == sip_status_answering 
+				)
+			{
+				return;
+			}
+		}
+
 		if (code == sip_error_ok)
 		{
 			sip_status_ = status;
@@ -210,7 +281,12 @@ namespace nim_comp
 
 		if (notify_)
 		{
-			notify_->OnSipStatusNotify(status, "", id, code);
+			notify_->OnSipStatusNotify(status, "", id, code,origin);
+		}
+		if (sip_status_ == sip_status_neterror)
+		{
+			StopSipPlugin();
+			return;
 		}
 	}
 
@@ -218,6 +294,18 @@ namespace nim_comp
 	{
 		//关闭掉可能存在的插件
 		StopSipPlugin();
+		Sleep(100);
+		//仍然存在的话，直接杀进程了
+		nbase::win32::CloseProcess(SIP_PLUGIN_NAME);
+		
+		if (sip_status_ == sip_status_neterror)
+		{
+			return false;
+		}
+		if (param_.server_.empty() || param_.id_.empty() || param_.pwd_.empty())
+		{
+			return false;
+		}
 
 		sip_status_ = sip_status_offline;
 
@@ -231,14 +319,15 @@ namespace nim_comp
 		int ret= (int)ShellExecuteW(NULL, L"open", sipPluginPath.c_str(), nbase::UTF8ToUTF16(sipCmdLine).c_str(), NULL, SW_SHOWDEFAULT);
 
 		return ret > 32;
-
-		//尝试运行插件
-		//return nbase::win32::RunAppWithCommand(sipPluginPath.c_str(), nbase::UTF8ToUTF16(sipCmdLine).c_str());
 	}
 
 	void SipTalkManager::StopSipPlugin()
 	{
-		nbase::win32::CloseProcess(SIP_PLUGIN_NAME);
+		if (sip_wnd_ == NULL || !IsWindow(sip_wnd_))
+		{
+			return;
+		}
+		SendCmd(SIP_CMD_CLOSE, "");
 	}
 
 
@@ -273,8 +362,10 @@ namespace nim_comp
 				}
 			}
 			SipTalkManager::GetInstance()->SetStatus(sip_status_online, "", (SipErrorCode)wParam);
+			QLOG_APP(L"sip注册成功");
 			break;
 		case SIP_MSG_OFFLINE:
+			QLOG_APP(L"sip离线了");
 			SipTalkManager::GetInstance()->SetStatus(sip_status_offline, "", (SipErrorCode)wParam);
 			break;
 		case SIP_MSG_CALLING:
@@ -293,7 +384,12 @@ namespace nim_comp
 			SipTalkManager::GetInstance()->SetStatus(sip_status_ringing, "", (SipErrorCode)wParam);
 			break;
 		case SIP_MSG_DISCONNECT:  //这里的lParam里面包含了原始的sip协议状态码,暂时未启用
-			SipTalkManager::GetInstance()->SetStatus(sip_status_disconnected, "", (SipErrorCode)wParam);
+			SipTalkManager::GetInstance()->SetStatus(sip_status_disconnected, "", (SipErrorCode)wParam,lParam);
+			QLOG_APP(L"通话结束--------错误码{0}") << lParam;
+			break;
+		case SIP_MSG_AUD_CHECK:  //这里的lParam里面包含了原始的sip协议状态码,暂时未启用
+			SipTalkManager::GetInstance()->SetHasAudio(lParam);
+			QLOG_APP(L"麦克风检测结果{0}") << lParam;
 			break;
 
 		case WM_COPYDATA:  //目前仅用于on_incoming_call回调里面包含对方id，可拓展
